@@ -403,7 +403,8 @@ def kde(x, x_grid, bandwidth=0.4, **kwargs):
     return kde.evaluate(x_grid)
 
 
-def scatter_matrix(df, marker_color=None, 
+def scatter_matrix(df, marker_color=None,
+                   marker_text=None,
                    figsize=(1024,1024), 
                    title='', 
                    outfile=None,
@@ -447,6 +448,13 @@ def scatter_matrix(df, marker_color=None,
 
     """
     
+    if hasattr(marker_text, '__call__'):
+        texts = marker_text(df)
+    elif isinstance(marker_text, str):
+        texts = df[marker_text].values.tolist()
+    elif hasattr(marker_text, '__iter__'):
+        texts = marker_text
+    
     if isinstance(marker_color, str):
         tmp = marker_color
         marker_color = df[marker_color].values.tolist()
@@ -457,12 +465,11 @@ def scatter_matrix(df, marker_color=None,
     
     alpha = .5
     
-    color_is_rgba = False
-    if hasattr(marker_color, '__call__'): # function provided
+    if hasattr(marker_color, '__call__'):  # function provided
         colors = marker_color(df)
         
     elif hasattr(marker_color, '__iter__'):
-        if isinstance(marker_color[0], str): # array-like of strings (i.e. categories) 
+        if isinstance(marker_color[0], str):  # array-like of strings (i.e. categories) 
             unique_vals = np.unique(marker_color).tolist()
             n_colors = len(unique_vals)
             
@@ -475,7 +482,7 @@ def scatter_matrix(df, marker_color=None,
             for c in marker_color:
                 colors.append(rgb[unique_vals.index(c)])
                 
-            colors = ['rgba(' + ','.join([str(c) for c in color])+',%1.2f)'%alpha for color in colors]
+            colors = ['rgba(' + ','.join([str(c) for c in color])+',%1.2f)'% alpha for color in colors]
         else:
             colors = marker_color
         
@@ -521,7 +528,7 @@ def scatter_matrix(df, marker_color=None,
                             line=go.Line(width=2, color='black'))]
             
             else:  # scatter plot
-                sub_plot = [go.Scatter(x=df[x_column], y=df[y_column], 
+                sub_plot = [go.Scatter(y=df[x_column], x=df[y_column], 
                                     mode='markers',
                                     marker=go.Marker(size=6, 
                                                      color=scatter_color,
@@ -529,11 +536,15 @@ def scatter_matrix(df, marker_color=None,
 
             # set text for each datapoint
             for pt in sub_plot:
-                pt.update(name='{0}'.format(x_column),\
-                          xaxis='x{}'.format(subplots[subplot_idx]),\
-                          yaxis='y{}'.format(subplots[subplot_idx]))
+                pt.update(xaxis='x{}'.format(subplots[subplot_idx]),\
+                          yaxis='y{}'.format(subplots[subplot_idx]), \
+                          name='{0}'.format(x_column))
+                    
                 if i!=j:
-                    pt.update(text='{0}<br>vs<br>{1}'.format(x_column,y_column))
+                    if texts:
+                        pt.update(text=texts)
+                    else:
+                        pt.update(text='{0}<br>vs<br>{1}'.format(y_column,x_column))
                 
             subplot_idx += 1
             data += sub_plot
@@ -556,11 +567,6 @@ def scatter_matrix(df, marker_color=None,
     if outfile:
         print('Exporting copy of figure to %s...' % outfile)
         ol.plot(fig, auto_open=False, filename=outfile)
-
-cols = ['total_followers','total_following','total_published_mixes']
-scatter_matrix(np.log1p(beh.data.loc[::skip_every,cols]),
-               marker_color=beh.data.loc[::skip_every, 'user_type'].values.tolist(),
-               figsize=(800,800))
 
 def box_plot(df, groupby=None, val=None, figsize=(1024,512), title='', ylabel=''):
     """
