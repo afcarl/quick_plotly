@@ -1,3 +1,4 @@
+import plotly.plotly as py
 import plotly.offline as ol
 import plotly.graph_objs as go
 
@@ -6,7 +7,8 @@ from plotly.tools import FigureFactory as FF
 
 import numpy as np
 import seaborn as sns
-from scipy.stats import gaussian_kde
+
+from datetime import datetime
  
 
 def initialize_plotly():
@@ -86,6 +88,7 @@ def show_geo_projections():
     'albers usa'
     """
 
+from scipy.stats import gaussian_kde
 def kde(x, x_grid, bandwidth=0.4, **kwargs):
     """Kernel Density Estimation with Scipy"""
     # From https://jakevdp.github.io/blog/2013/12/01/kernel-density-estimation/
@@ -568,7 +571,11 @@ def scatter_matrix(df, marker_color=None,
         print('Exporting copy of figure to %s...' % outfile)
         ol.plot(fig, auto_open=False, filename=outfile)
 
-def box_plot(df, groupby=None, val=None, figsize=(1024,512), title='', ylabel=''):
+
+
+def box_plot(df, groupby=None, val=None, figsize=(1024,512),
+             jitter=None, marker_alpha=1, marker_mode=None,
+             title='', ylabel=''):
     """
     Visualize box plots for all columns in the dataframe <df>.
     
@@ -585,6 +592,15 @@ def box_plot(df, groupby=None, val=None, figsize=(1024,512), title='', ylabel=''
     val: str
         Used in conjuction with <groupby> to choose column values to plot.
         If None, then we choose the first column (excluding <groupby>)
+        
+    jitter: float (0-1)
+        The proportion of each box area to jitter datapoints
+        
+    marker_alpha: float (0-1)
+        The opacity of the data points plotted
+        
+    boxpoint_mode: 'all','suspectedoutliers', 'Outliers', Boolean, or None
+        Specifies the way that datapoints are plotted.
     
     figsize: tuple
         The (width, height) of the figure in pixels
@@ -621,16 +637,19 @@ def box_plot(df, groupby=None, val=None, figsize=(1024,512), title='', ylabel=''
         for col in df.columns:
             data.append(go.Box(y=df[col], name=col))
     else:
-        groups = df[groupby].unique().tolist()
+        groups = sorted(df[groupby].unique().tolist())
         if val is None:
             val = df.columns.drop(groupby)[0] # choose first non-groupby column
         for group in groups:
             mask = df[groupby] == group
-            data.append(go.Box(y=df.loc[mask, val], name=group))
+            data.append(go.Box(y=df.loc[mask, val], 
+                               name=group,
+                               jitter=jitter,
+                               boxpoints=marker_mode,
+                               marker=dict(opacity=marker_alpha)))
             
 
     ol.iplot(go.Figure(data=data, layout=layout), show_link=False)
-
 
 def bar_plot(df, x, y, group_by=None, 
              orientation='v', barmode='stack', 
@@ -1003,11 +1022,13 @@ def bubble_map(df,
     if outfile:
         print('Exporting copy of figure to %s...' % outfile)
 
-def line_chart(df, x, y=None, 
+def line_chart(df, x, y=None, groupby=None, 
                line_colors=None, 
-               line_names=None, 
+               line_names=None,
+               line_text=None,
                ylabel='', xlabel='',
-               title='', cmap='deep', 
+               title='', cmap='deep',
+               figsize=(800,600), 
                outfile=None):
     """
     Plot 2D traces of values along the columns of the dataframe <df>
@@ -1023,6 +1044,9 @@ def line_chart(df, x, y=None,
     y: str, list of strings, or None (default)
         The name columns to use as the range (vertical-axis) variables.
         If None provided, we use the remaining columns in <df>
+        
+    groupby: str, or None
+        The name of a column to to group by
         
     line_colors: function, array-like of 'rgb()' or numerical values, or None
         Determines the colors of the traces. Can explicitly provide a list
@@ -1063,18 +1087,21 @@ def line_chart(df, x, y=None,
     functions = pd.DataFrame(np.vstack([xx, cos_y, cos2_y, sin_y, sin2_y])).T
     functions.columns = ['x','cos(x)','cos(x^2)', 'sin(x)', 'sin(x^2)']
     line_chart(functions, x='x', title='Line Chart', xlabel='x', ylabel='f(x)')
-
     
     """
     
-    x_val = df[x].values
+
     
     if isinstance(y, str):  # single column as string
         y = [y]
     elif y is None:  # use remaining columns as traces
         y = df.drop([x], axis=1).columns
         
-    n_columns = len(y)
+    if groupby:
+        groups = sorted(df[groupby].unique().tolist())
+        n_groups = len(groups)
+    else:
+        n_groups = len(y)
     
     if line_names is None:
         line_names = y
@@ -1086,27 +1113,64 @@ def line_chart(df, x, y=None,
         pass
     elif line_colors is None:  # set up color palette
          # set up colors
-        palette = sns.color_palette(cmap, n_columns)
+        palette = sns.color_palette(cmap, n_groups)
 
         # rescale to 0 - 256
         rgb = [[int(p*256) for p in color] for color in palette]
         # define line colors
         line_colors = ['rgb(%d,%d,%d)' % (v[0],v[1],v[2]) for v in rgb]
+        
+    if hasattr(line_text, '__call__'):
+        line_texts = line_text(df)
+    elif isinstance(line_text, str):
+        line_texts = df[line_text].unique().tolist()
+    elif hasattr(line_text,'__iter__'):
+        pass
     
+    
+    if groupby:
+        groups = df[groupby].unique().tolist()
+    
+        
     traces = []
     for i, col in enumerate(y):
-        y_val = df[col].values
-        line_color = line_colors[i]
-        trace = go.Scatter(x=x_val,
-                           y=y_val,
-                           name=line_names[i],
-                           line=(dict(color=line_color, shape='spline')))
         
-        traces.append(trace)
+        if groupby is None:
+            line_color = line_colors[i]
+            x_val = df[x].values
+            y_val = df[col].values
+            
+            trace = go.Scatter(x=x_val,
+                               y=y_val,
+                               name=line_names[i],
+                               text=line_texts,
+                               line=(dict(color=line_color, shape='spline')))
+            traces.append(trace)
+        else:
+            for j, group in enumerate(groups):
+                mask = df[groupby] == group
+                x_val = df[mask][x].values
+                y_val = df[mask][col].values
+                line_color = line_colors[j]
+                if line_text is not None:
+                    group_texts = line_texts[j]
+                else:
+                    group_texts = None
+                    
+                trace = go.Scatter(x=x_val,
+                                   y=y_val,
+                                   text=group_texts,
+                                   name=group,
+                                   line=(dict(color=line_color, shape='spline')))
+                
+
+                traces.append(trace)
     
     layout = dict(title=title,
                   xaxis=dict(title=xlabel),
-                  yaxis=dict(title=ylabel))
+                  yaxis=dict(title=ylabel),
+                  height=figsize[1],
+                  width=figsize[0])
     
     fig = dict(data=traces, layout=layout)
     ol.iplot(fig, show_link=False)
@@ -1128,6 +1192,7 @@ def choropleth(df, region_codename,
                geo_kwargs=None,
                title='',
                colorbar_title=None,
+               colorbar_length=.25,
                outfile=None):
     
     """
@@ -1253,6 +1318,9 @@ def choropleth(df, region_codename,
         colorbar = dict(title=region_value)
     else:
         colorbar={}
+
+    if colorbar_length:
+        colorbar['len'] = colorbar_length
         
     locations = df[region_codename]
     
@@ -1279,23 +1347,27 @@ def dist_plot(df,
               groupby=None,
               val=None,
               bin_size=1, 
-              title=None, 
-              show_kde=True, show_rug=True, 
+              title=None,
+              show_hist=True,
+              show_kde=True, 
+              show_rug=True, 
               show_legend=True, 
               figsize=None,
-              outfile=None):
+              outfile=None,
+              xlabel=None,
+              ylabel=None):
     
     if groupby is None:
-        fig = FF.create_distplot([df[c] for c in df.cols], 
-                                 cols, 
-                                 bin_size=bin_size,
-                                 show_rug=show_rug,
-                                 show_curve=show_kde)
+        fig = FF.create_distplot([df[c] for c in df.columns], 
+                                     df.columns.values.tolist(), 
+                                     bin_size=bin_size,
+                                     show_rug=show_rug,
+                                     show_curve=show_kde)
     else:
-        groups = df[groupby].unique().tolist()
+        groups = sorted(df[groupby].unique().tolist(), reverse=True)
         data = []
         if val is None:
-            val = df.columns.drop(groupby)[0] # choose first non-groupby column
+            val = df.columns.drop(groupby)[0]  # choose first non-groupby column
             
         for group in groups:
             mask = df[groupby] == group
@@ -1304,6 +1376,7 @@ def dist_plot(df,
         fig = FF.create_distplot(data, 
                                  groups, 
                                  bin_size=bin_size,
+                                 show_hist=show_hist,
                                  show_rug=show_rug,
                                  show_curve=show_kde)
         
@@ -1311,6 +1384,14 @@ def dist_plot(df,
     
     if title:
         fig['layout'].update(title=title)
+
+    if xlabel:
+        fig['layout'].update(xaxis=go.XAxis(title=xlabel))
+
+    if ylabel:
+        fig['layout'].update(yaxis=go.YAxis(title=ylabel))
+
+
         
     if figsize and len(figsize) == 2:
         fig['layout'].update(width=figsize[0])
